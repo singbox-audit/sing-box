@@ -2,9 +2,9 @@ name: Audit server
 
 on:
   push:
-    branches: [audit-server]
+    branches: [audit-server, testing]
   pull_request:
-    branches: [audit-server]
+    branches: [audit-server, testing]
 
 permissions:
   contents: read

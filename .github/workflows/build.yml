@@ -30,10 +30,11 @@ on:
         description: "TestFlight test message"
         required: false
         type: string
+  release:
+    types: [published]
   push:
     branches:
       - stable
-      - testing
       - unstable
 
 concurrency:
@@ -46,6 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.outputs.outputs.version }}
+      signed_macos: ${{ steps.outputs.outputs.signed_macos }}
     steps:
       - name: Checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
@@ -74,13 +76,18 @@ jobs:
           echo "version=${{ inputs.version }}"
           echo "version=${{ inputs.version }}" >> "$GITHUB_ENV"
       - name: Calculate version
-        if: github.event_name != 'workflow_dispatch'
-        run: |-
-          go run -v ./cmd/internal/read_tag --ci --nightly
+        if: github.event_name == 'push'
+        run: go run -v ./cmd/internal/read_tag --ci --nightly
+      - name: Read fork release tag
+        if: github.event_name == 'release'
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
       - name: Set outputs
         id: outputs
+        env:
+          SIGNED_MACOS: ${{ secrets.DEVELOPER_ID_CERTIFICATES_P12 != '' && secrets.APPLE_PROVISIONING_PROFILES_1 != '' }}
         run: |-
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "signed_macos=$SIGNED_MACOS" >> "$GITHUB_OUTPUT"
   build:
     name: Build binary
     if: github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Binary'
@@ -88,6 +95,7 @@ jobs:
     needs:
       - calculate_version
     strategy:
+      fail-fast: false
       max-parallel: 13
       matrix:
         include:
@@ -367,6 +375,12 @@ jobs:
             -p "dist/sing-box_${{ needs.calculate_version.outputs.version }}_${{ matrix.os }}_${{ matrix.debian }}.deb" \
             --architecture ${{ matrix.debian }} \
             dist/sing-box=/usr/bin/sing-box
+      - name: Sign debian package when the fork signing key is configured
+        if: matrix.debian != ''
+        env:
+          GPG_KEY: ${{ secrets.GPG_KEY }}
+        run: |
+          [[ -n "$GPG_KEY" ]] || exit 0
           rm -rf $HOME/.gnupg
           gpg --pinentry-mode loopback --passphrase "${{ secrets.GPG_PASSPHRASE }}" --import <<EOF
           ${{ secrets.GPG_KEY }}
@@ -384,6 +398,12 @@ jobs:
             -p "dist/sing-box_${{ needs.calculate_version.outputs.version }}_${{ matrix.os }}_${{ matrix.rpm }}.rpm" \
             --architecture ${{ matrix.rpm }} \
             dist/sing-box=/usr/bin/sing-box
+      - name: Sign rpm package when the fork signing key is configured
+        if: matrix.rpm != ''
+        env:
+          GPG_KEY: ${{ secrets.GPG_KEY }}
+        run: |
+          [[ -n "$GPG_KEY" ]] || exit 0
           cat > $HOME/.rpmmacros <<EOF
           %_gpg_name ${{ secrets.GPG_KEY_ID }}
           %_gpg_sign_cmd_extra_args --pinentry-mode loopback --passphrase ${{ secrets.GPG_PASSPHRASE }}
@@ -476,6 +496,7 @@ jobs:
       - calculate_version
       - build_apple_library
     strategy:
+      fail-fast: false
       matrix:
         include:
           - { arch: amd64 }
@@ -576,6 +597,7 @@ jobs:
     needs:
       - calculate_version
     strategy:
+      fail-fast: false
       matrix:
         include:
           - { arch: amd64, naive: true }
@@ -853,7 +875,7 @@ jobs:
           path: 'dist'
   publish_android:
     name: Publish Android
-    if: github.event_name == 'workflow_dispatch' && inputs.build == 'publish-android' && (github.ref == 'refs/heads/stable' || github.ref == 'refs/heads/testing')
+    if: vars.ENABLE_STORE_PUBLISH == 'true' && github.event_name == 'workflow_dispatch' && inputs.build == 'publish-android' && (github.ref == 'refs/heads/stable' || github.ref == 'refs/heads/testing')
     runs-on: ubuntu-latest
     needs:
       - calculate_version
@@ -1035,6 +1057,7 @@ jobs:
           go run -v ./cmd/internal/update_desktop_version --ci --nightly
       - name: Setup signing
         run: |-
+          if (-not $env:WINDOWS_CERTIFICATES_P12) { exit 0 }
           $certificatePath = Join-Path $env:RUNNER_TEMP "windows-signing.p12"
           [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATES_P12))
           @{
@@ -1074,6 +1097,7 @@ jobs:
     needs:
       - calculate_version
     strategy:
+      fail-fast: false
       matrix:
         include:
           - { desktop_arch: x64, go_arch: amd64, rust_target: x86_64-unknown-linux-gnu }
@@ -1190,6 +1214,7 @@ jobs:
       - name: Setup package signing
         run: |-
           set -euo pipefail
+          [[ -n "$GPG_KEY" ]] || exit 0
           SIGNING_GNUPG_HOME="$RUNNER_TEMP/package-signing-gnupg"
           SIGNING_PASSPHRASE_FILE="$RUNNER_TEMP/package-signing-passphrase"
           mkdir -m 700 "$SIGNING_GNUPG_HOME"
@@ -1214,6 +1239,7 @@ jobs:
           GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
       - name: Sign Linux packages
+        if: env.SIGNING_PASSPHRASE_FILE != ''
         run: |-
           set -euo pipefail
           debsigs \
@@ -1241,7 +1267,7 @@ jobs:
           path: 'dist'
   build_apple_library:
     name: Build Apple library (${{ matrix.artifact }})
-    runs-on: ${{ matrix.build && 'xcode-27' || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.build && (vars.APPLE_RUNNER || 'macos-latest') || 'ubuntu-latest' }}
     if: github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Apple' || inputs.build == 'Apple-release' || inputs.build == 'iOS' || inputs.build == 'macOS' || inputs.build == 'tvOS' || inputs.build == 'macOS-standalone' || inputs.build == 'iOS-jailbreak'
     needs:
       - calculate_version
@@ -1254,7 +1280,7 @@ jobs:
             build: ${{ github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Apple' || inputs.build == 'Apple-release' || inputs.build == 'iOS' || inputs.build == 'iOS-jailbreak' }}
           - artifact: tvos-arm64
             platform: tvos/arm64
-            build: ${{ github.event_name == 'workflow_dispatch' && (inputs.build == 'All' || inputs.build == 'Apple' || inputs.build == 'tvOS') }}
+            build: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && (inputs.build == 'All' || inputs.build == 'Apple' || inputs.build == 'tvOS')) }}
           - artifact: macos-arm64
             platform: macos/arm64
             build: ${{ github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Apple' || inputs.build == 'Apple-release' || inputs.build == 'macOS' || inputs.build == 'macOS-standalone' }}
@@ -1312,7 +1338,7 @@ jobs:
           compression-level: 1
   build_apple:
     name: Build Apple release clients
-    runs-on: ${{ matrix.if && 'xcode-27' || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.if && (vars.APPLE_RUNNER || 'macos-latest') || 'ubuntu-latest' }}
     if: github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Apple-release' || inputs.build == 'macOS-standalone' || inputs.build == 'iOS-jailbreak'
     needs:
       - calculate_version
@@ -1322,7 +1348,7 @@ jobs:
       matrix:
         include:
           - name: macOS-standalone
-            if: ${{ github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Apple-release' || inputs.build == 'macOS-standalone' }}
+            if: ${{ needs.calculate_version.outputs.signed_macos == 'true' && (github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Apple-release' || inputs.build == 'macOS-standalone') }}
             type: standalone
             platform: macos
             variant: all
@@ -1644,8 +1670,8 @@ jobs:
           path: 'dist'
   build_apple_app_store:
     name: Build Apple App Store clients
-    runs-on: ${{ matrix.if && 'xcode-27' || 'ubuntu-latest' }}
-    if: github.event_name == 'workflow_dispatch' && (inputs.build == 'All' || inputs.build == 'Apple' || inputs.build == 'iOS' || inputs.build == 'macOS' || inputs.build == 'tvOS')
+    runs-on: ${{ matrix.if && (vars.APPLE_RUNNER || 'macos-latest') || 'ubuntu-latest' }}
+    if: vars.ENABLE_STORE_PUBLISH == 'true' && github.event_name == 'workflow_dispatch' && (inputs.build == 'All' || inputs.build == 'Apple' || inputs.build == 'iOS' || inputs.build == 'macOS' || inputs.build == 'tvOS')
     needs:
       - calculate_version
       - build_apple_library
@@ -1691,8 +1717,10 @@ jobs:
             library_arch: ''
     steps: *build_apple_steps
   upload:
-    name: Upload builds
-    if: "!failure() && github.event_name == 'workflow_dispatch' && (inputs.build == 'All' || inputs.build == 'Binary' || inputs.build == 'Android' || inputs.build == 'Windows' || inputs.build == 'Linux' || inputs.build == 'Apple-release' || inputs.build == 'macOS-standalone' || inputs.build == 'iOS-jailbreak')"
+    name: Upload builds to fork release
+    if: >-
+      !cancelled() && needs.calculate_version.result == 'success' &&
+      (github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.build != 'publish-android'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -1715,25 +1743,6 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
         with:
           fetch-depth: 1
-      - name: Cache ghr
-        uses: actions/cache@v4
-        id: cache-ghr
-        with:
-          path: |
-            ~/go/bin/ghr
-          key: ghr
-      - name: Setup ghr
-        if: steps.cache-ghr.outputs.cache-hit != 'true'
-        run: |-
-          cd $HOME
-          git clone https://github.com/nekohasekai/ghr ghr
-          cd ghr
-          go install -v .
-      - name: Set tag
-        run: |-
-          git ls-remote --exit-code --tags origin v${{ needs.calculate_version.outputs.version }} || echo "PUBLISHED=false" >> "$GITHUB_ENV"
-          git tag v${{ needs.calculate_version.outputs.version }} -f
-          echo "VERSION=${{ needs.calculate_version.outputs.version }}" >> "$GITHUB_ENV"
       - name: Download builds
         uses: actions/download-artifact@v5
         with:
@@ -1744,20 +1753,11 @@ jobs:
         uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
         with:
           subject-path: 'dist/**'
-      - name: Upload builds
-        if: ${{ env.PUBLISHED == 'false' }}
-        run: |-
-          export PATH="$PATH:$HOME/go/bin"
-          ghr --replace --draft --prerelease -p 5 "v${VERSION}" dist
+      - name: Publish release assets
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Replace builds
-        if: ${{ env.PUBLISHED != 'false' }}
-        run: |-
-          export PATH="$PATH:$HOME/go/bin"
-          ghr --replace -p 5 "v${VERSION}" dist
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ needs.calculate_version.outputs.version }}
+        run: bash .github/publish_release.sh "$TAG" dist
   cache_gc:
     name: Cache GC
     if: always()

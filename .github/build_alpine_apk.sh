@@ -30,7 +30,7 @@ PROJECT=$(cd "$(dirname "$0")/.."; pwd)
 #   1.13.0-beta.8  -> 1.13.0_beta8-r0
 #   1.13.0-rc.3    -> 1.13.0_rc3-r0
 #   1.13.0         -> 1.13.0-r0
-APK_VERSION=$(echo "$VERSION" | sed -E 's/-([a-z]+)\.([0-9]+)/_\1\2/')
+APK_VERSION=$(echo "$VERSION" | sed -E 's/-audit\.([0-9]+)$/_p\1/; s/-([a-z]+)\.([0-9]+)/_\1\2/')
 APK_VERSION="${APK_VERSION}-r0"
 
 ROOT_DIR=$(mktemp -d)
@@ -88,7 +88,7 @@ apk --root "$APK_ROOT_DIR" mkpkg \
   --info "arch:${ARCHITECTURE}" \
   --info "license:GPL-3.0-or-later with name use or association addition" \
   --info "origin:sing-box" \
-  --info "url:https://sing-box.sagernet.org/" \
-  --info "maintainer:nekohasekai <contact-git@sekai.icu>" \
+  --info "url:https://github.com/singbox-audit/sing-box" \
+  --info "maintainer:singbox-audit <singbox-audit@users.noreply.github.com>" \
   --files "$ROOT_DIR" \
   --output "$OUTPUT_PATH"

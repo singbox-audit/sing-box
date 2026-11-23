@@ -74,3 +74,9 @@ uv run --with duckdb==2.0.1 tools/audit/test_archive.py
 DNS 用例在环回接口启动两种代理入口、两个客户端入口及两个测试解析器，要求 openssl、zstd 和 Linux procfs。可传入同版本官方二进制并加 `--baseline` 对照客户端结果。目标 VPS 的长期吞吐、DNS 延迟、Swap 活动和离线保留天数，需要结合实际用户流量测量。
 
 路由用例要求一个新输出目录，使用 16 个并发客户端完成 512 条短连接，检查切组前后的流量归属、半关闭、拒绝和不支持 UDP 的出站，等待一次快照后强杀并重启测试子进程。脚本仅监听环回地址。
+
+## Fork 发行
+
+`testing` 的推送运行审计 CI。发布独立的 fork 标签（如 `v1.14.4-audit.1`）对应的 GitHub Release 后，Actions 会从该提交启动全平台 Build、Linux 软件包和 Docker 镜像构建。已生成的安装包附加到当前仓库的 Release，镜像使用 `ghcr.io/singbox-audit/sing-box`。原版标签 `v1.14.4` 用于追溯基线。
+
+Linux 软件包及 Windows 安装程序可在未配置签名密钥时构建。签名版 macOS 安装包需要 fork 自己的证书和 provisioning profiles。Apple 默认使用 GitHub 托管的 macOS runner，也可通过仓库变量 `APPLE_RUNNER` 指定已配置 Xcode 的 runner。Google Play 和 App Store 投递仅在为 fork 配置好应用标识、凭据，并显式启用 `ENABLE_STORE_PUBLISH=true` 后手动执行。
