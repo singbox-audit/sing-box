@@ -1,3 +1,5 @@
+本仓库在 sing-box v1.14.4 基础上增加公网代理服务端审计，支持连接与逐条 DNS 明细、压缩归档和 DuckDB 查询。[部署与使用](docs/audit.md) · [设计文档](docs/design.md)
+
 # sing-box
 
 The universal proxy platform.
