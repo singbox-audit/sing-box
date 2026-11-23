@@ -24,6 +24,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var auditDirectory string
+
 var commandRun = &cobra.Command{
 	Use:   "run",
 	Short: "Run service",
@@ -36,6 +38,7 @@ var commandRun = &cobra.Command{
 }
 
 func init() {
+	commandRun.Flags().StringVar(&auditDirectory, "audit-directory", "", "Directory for compressed connection audit records")
 	mainCommand.AddCommand(commandRun)
 }
 
@@ -141,6 +144,7 @@ func create(options option.Options) (*box.Box, context.CancelFunc, error) {
 	instance, err := box.New(box.Options{
 		Context:                    ctx,
 		Options:                    options,
+		AuditDirectory:             auditDirectory,
 		NetworkNamespaceHolderArgs: []string{"/proc/self/exe", commandNetnsHolder.Use},
 	})
 	if err != nil {

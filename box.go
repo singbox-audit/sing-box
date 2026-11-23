@@ -11,6 +11,7 @@ import (
 	"github.com/sagernet/sing-box/adapter/inbound"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	boxService "github.com/sagernet/sing-box/adapter/service"
+	"github.com/sagernet/sing-box/common/audit"
 	"github.com/sagernet/sing-box/common/certificate"
 	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/common/httpclient"
@@ -64,6 +65,7 @@ type Box struct {
 type Options struct {
 	option.Options
 	Context                    context.Context
+	AuditDirectory             string
 	PlatformLogWriter          log.PlatformWriter
 	NetworkNamespaceHolderArgs []string
 }
@@ -239,6 +241,11 @@ func New(options Options) (*Box, error) {
 	err = router.Initialize(routeOptions.Rules, routeOptions.RuleSet)
 	if err != nil {
 		return nil, E.Cause(err, "initialize router")
+	}
+	if options.AuditDirectory != "" {
+		recorder := audit.NewRecorder(options.AuditDirectory, logFactory.NewLogger("audit"))
+		router.AppendTracker(recorder)
+		internalServices = append(internalServices, recorder)
 	}
 	if needClashAPI || needAPIService || options.PlatformLogWriter != nil {
 		trafficManager := trafficcontrol.NewManager()
