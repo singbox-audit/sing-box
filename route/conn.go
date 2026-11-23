@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/audit"
 	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/common/sniff"
 	"github.com/sagernet/sing-box/common/tlsfragment"
@@ -122,11 +123,17 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 			dialerString = " using outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
 		}
 		err = E.Cause(err, "open connection to ", remoteString, dialerString)
+		audit.DialResult(ctx, "dial_error", netip.Addr{}, err)
 		m.deleteURLTestHistory(metadata.OutboundChain)
 		N.CloseOnHandshakeFailure(conn, onClose, err)
 		m.logger.ErrorContext(ctx, err)
 		return
 	}
+	var actual netip.Addr
+	if ob, ok := this.(adapter.Outbound); ok && ob.Type() == C.TypeDirect {
+		actual = M.AddrFromNet(remoteConn.RemoteAddr())
+	}
+	audit.DialResult(ctx, "connected", actual, nil)
 	err = N.ReportConnHandshakeSuccess(conn, remoteConn)
 	if err != nil {
 		err = E.Cause(err, "report handshake success")
@@ -157,6 +164,7 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 	if m.kickWriteHandshake(ctx, remoteConn, conn, serverFirst, true, &done, onClose) {
 		return
 	}
+	audit.StartCopies(ctx)
 	go m.connectionCopy(ctx, conn, remoteConn, false, &done, onClose)
 	go m.connectionCopy(ctx, remoteConn, conn, true, &done, onClose)
 }
@@ -198,6 +206,7 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 				dialerString = " using outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
 			}
 			err = E.Cause(err, "open packet connection to ", remoteString, dialerString)
+			audit.DialResult(ctx, "dial_error", netip.Addr{}, err)
 			m.deleteURLTestHistory(metadata.OutboundChain)
 			N.CloseOnHandshakeFailure(conn, onClose, err)
 			m.logger.ErrorContext(ctx, err)
@@ -222,12 +231,21 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 				dialerString = " using outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
 			}
 			err = E.Cause(err, "listen packet connection using ", dialerString)
+			audit.DialResult(ctx, "dial_error", netip.Addr{}, err)
 			m.deleteURLTestHistory(metadata.OutboundChain)
 			N.CloseOnHandshakeFailure(conn, onClose, err)
 			m.logger.ErrorContext(ctx, err)
 			return
 		}
 	}
+	var actual netip.Addr
+	if ob, ok := this.(adapter.Outbound); ok && ob.Type() == C.TypeDirect {
+		actual = destinationAddress
+		if remoteConn != nil {
+			actual = M.AddrFromNet(remoteConn.RemoteAddr())
+		}
+	}
+	audit.DialResult(ctx, "packet_session", actual, nil)
 	err = N.ReportPacketConnHandshakeSuccess(conn, remotePacketConn)
 	if err != nil {
 		err = E.Cause(err, "report handshake success")
@@ -277,6 +295,7 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 	}
 	destination := bufio.NewPacketConn(remotePacketConn)
 	var done atomic.Bool
+	audit.StartCopies(ctx)
 	go m.packetConnectionCopy(ctx, conn, destination, false, &done, onClose)
 	go m.packetConnectionCopy(ctx, destination, conn, true, &done, onClose)
 }
@@ -291,6 +310,7 @@ func (m *ConnectionManager) deleteURLTestHistory(chain []adapter.Outbound) {
 }
 
 func (m *ConnectionManager) connectionCopy(ctx context.Context, source net.Conn, destination net.Conn, direction bool, done *atomic.Bool, onClose N.CloseHandlerFunc) {
+	defer audit.CopyFinished(ctx)
 	_, err := bufio.CopyWithIncreateBuffer(destination, source, bufio.DefaultIncreaseBufferAfter, bufio.DefaultBatchSize)
 	if err != nil {
 		common.Close(source, destination)
@@ -390,6 +410,7 @@ func (m *ConnectionManager) kickWriteHandshake(ctx context.Context, source net.C
 }
 
 func (m *ConnectionManager) packetConnectionCopy(ctx context.Context, source N.PacketReader, destination N.PacketWriter, direction bool, done *atomic.Bool, onClose N.CloseHandlerFunc) {
+	defer audit.CopyFinished(ctx)
 	_, err := bufio.CopyPacket(destination, source)
 	if !direction {
 		if err == nil {

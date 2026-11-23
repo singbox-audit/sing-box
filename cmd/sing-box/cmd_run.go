@@ -25,6 +25,7 @@ import (
 )
 
 var auditDirectory string
+var auditMinFreeMiB uint32
 
 var commandRun = &cobra.Command{
 	Use:   "run",
@@ -38,7 +39,8 @@ var commandRun = &cobra.Command{
 }
 
 func init() {
-	commandRun.Flags().StringVar(&auditDirectory, "audit-directory", "", "Directory for compressed connection audit records")
+	commandRun.Flags().StringVar(&auditDirectory, "audit-directory", "", "Directory for compressed connection and DNS audit records")
+	commandRun.Flags().Uint32Var(&auditMinFreeMiB, "audit-min-free-mib", 0, "Pause new audited requests below this many free MiB (Linux)")
 	mainCommand.AddCommand(commandRun)
 }
 
@@ -145,6 +147,7 @@ func create(options option.Options) (*box.Box, context.CancelFunc, error) {
 		Context:                    ctx,
 		Options:                    options,
 		AuditDirectory:             auditDirectory,
+		AuditMinFreeBytes:          uint64(auditMinFreeMiB) << 20,
 		NetworkNamespaceHolderArgs: []string{"/proc/self/exe", commandNetnsHolder.Use},
 	})
 	if err != nil {

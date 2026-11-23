@@ -7,7 +7,6 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
-	"github.com/sagernet/sing-box/dns"
 	dnsOutbound "github.com/sagernet/sing-box/protocol/dns"
 	R "github.com/sagernet/sing-box/route/rule"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -63,20 +62,10 @@ func (r *Router) HijackDNSPacket(ctx context.Context, payload []byte, writer N.P
 	r.searchProcessInfo(ctx, &metadata)
 	destination := metadata.Destination
 	metadata.Destination = M.Socksaddr{}
-	r.dns.ExchangeAsync(adapter.WithContext(ctx, &metadata), &message, adapter.DNSQueryOptions{}, func(response *mDNS.Msg, exchangeErr error) {
-		if exchangeErr == nil {
-			exchangeErr = r.writeDNSPacketResponse(&message, response, writer, destination)
-		}
+	report := func(exchangeErr error) {
 		if exchangeErr != nil && !R.IsRejected(exchangeErr) && !E.IsClosedOrCanceled(exchangeErr) {
 			r.logger.ErrorContext(ctx, E.Cause(exchangeErr, "process DNS packet"))
 		}
-	})
-}
-
-func (r *Router) writeDNSPacketResponse(message *mDNS.Msg, response *mDNS.Msg, writer N.PacketWriter, destination M.Socksaddr) error {
-	responseBuffer, err := dns.TruncateDNSMessage(message, response, N.CalculateFrontHeadroom(writer), N.CalculateRearHeadroom(writer))
-	if err != nil {
-		return err
 	}
-	return writer.WritePacket(responseBuffer, destination)
+	report(dnsOutbound.ExchangePacket(ctx, r.dns, metadata, &message, len(payload), writer, destination, N.CalculateFrontHeadroom(writer), N.CalculateRearHeadroom(writer), report))
 }

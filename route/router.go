@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/audit"
 	"github.com/sagernet/sing-box/common/process"
 	"github.com/sagernet/sing-box/common/taskmonitor"
 	C "github.com/sagernet/sing-box/constant"
@@ -45,13 +46,14 @@ type Router struct {
 	processCache      *freelru.Cache[processCacheKey, processCacheEntry]
 	neighborResolver  adapter.NeighborResolver
 	pauseManager      pause.Manager
+	audit             *audit.Recorder
 	trackers          []adapter.ConnectionTracker
 	platformInterface adapter.PlatformInterface
 }
 
 func NewRouter(ctx context.Context, logFactory log.Factory, options option.RouteOptions, dnsOptions option.DNSOptions) *Router {
 	return &Router{
-		ctx:               ctx,
+		ctx: ctx, audit: service.PtrFromContext[audit.Recorder](ctx),
 		logger:            logFactory.NewLogger("router"),
 		inbound:           service.FromContext[adapter.InboundManager](ctx),
 		outbound:          service.FromContext[adapter.OutboundManager](ctx),

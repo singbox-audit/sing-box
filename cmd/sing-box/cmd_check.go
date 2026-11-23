@@ -23,6 +23,7 @@ var commandCheck = &cobra.Command{
 }
 
 func init() {
+	commandCheck.Flags().StringVar(&auditDirectory, "audit-directory", "", "Check audited inbound identities for this directory")
 	mainCommand.AddCommand(commandCheck)
 }
 
@@ -34,7 +35,7 @@ func check() error {
 	ctx, cancel := context.WithCancel(service.ExtendContext(globalCtx))
 	instance, err := box.New(box.Options{
 		Context: ctx,
-		Options: options,
+		Options: options, AuditDirectory: auditDirectory,
 	})
 	if err == nil {
 		instance.Close()

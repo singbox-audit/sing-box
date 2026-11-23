@@ -3,9 +3,11 @@ package dns
 import (
 	"context"
 	"encoding/binary"
+	"io"
 	"net"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/audit"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/dns"
 	"github.com/sagernet/sing/common"
@@ -39,18 +41,23 @@ func HandleStreamDNSRequest(ctx context.Context, router adapter.DNSRouter, conn 
 	if err != nil {
 		return err
 	}
+	ctx, q, err := audit.BeginDNS(ctx, metadata, "tcp", &message, int(queryLength)+2)
+	if err != nil {
+		return err
+	}
 	metadataInQuery := metadata
 	router.ExchangeAsync(adapter.WithContext(ctx, &metadataInQuery), &message, adapter.DNSQueryOptions{}, func(response *mDNS.Msg, err error) {
 		if err != nil {
+			q.Failed(err)
 			conn.Close()
 			return
 		}
-		go writeStreamResponse(conn, response)
+		go writeStreamResponse(conn, response, q)
 	})
 	return nil
 }
 
-func writeStreamResponse(conn net.Conn, response *mDNS.Msg) {
+func writeStreamResponse(conn net.Conn, response *mDNS.Msg, q *audit.DNSQuery) {
 	responseLength := response.Len()
 	responseBuffer := buf.NewSize(3 + responseLength)
 	defer responseBuffer.Release()
@@ -58,12 +65,22 @@ func writeStreamResponse(conn net.Conn, response *mDNS.Msg) {
 	compressedResponse := *response
 	compressedResponse.Compress = true
 	n, err := compressedResponse.PackBuffer(responseBuffer.FreeBytes())
+	result := q.Response(response)
 	if err != nil {
+		if result != nil {
+			result(0, err)
+		}
 		return
 	}
 	responseBuffer.Truncate(len(n))
 	binary.BigEndian.PutUint16(responseBuffer.ExtendHeader(2), uint16(len(n)))
-	conn.Write(responseBuffer.Bytes())
+	written, err := conn.Write(responseBuffer.Bytes())
+	if written != responseBuffer.Len() && err == nil {
+		err = io.ErrShortWrite
+	}
+	if result != nil {
+		result(written, err)
+	}
 }
 
 func NewDNSPacketConnection(ctx context.Context, router adapter.DNSRouter, conn N.PacketConn, cachedPackets []*N.PacketBuffer, metadata adapter.InboundContext) error {
@@ -94,6 +111,7 @@ func NewDNSPacketConnection(ctx context.Context, router adapter.DNSRouter, conn 
 	group.Append0(func(_ context.Context) error {
 		for {
 			var message mDNS.Msg
+			var size int
 			var destination M.Socksaddr
 			var err error
 			if len(cachedPackets) > 0 {
@@ -102,6 +120,7 @@ func NewDNSPacketConnection(ctx context.Context, router adapter.DNSRouter, conn 
 				for _, counter := range counters {
 					counter(int64(packet.Buffer.Len()))
 				}
+				size = packet.Buffer.Len()
 				err = message.Unpack(packet.Buffer.Bytes())
 				packet.Buffer.Release()
 				if err != nil {
@@ -120,6 +139,7 @@ func NewDNSPacketConnection(ctx context.Context, router adapter.DNSRouter, conn 
 				for _, counter := range counters {
 					counter(int64(buffer.Len()))
 				}
+				size = buffer.Len()
 				err = message.Unpack(buffer.Bytes())
 				buffer.Release()
 				if err != nil {
@@ -128,23 +148,16 @@ func NewDNSPacketConnection(ctx context.Context, router adapter.DNSRouter, conn 
 				}
 				timeout.Update()
 			}
-			metadataInQuery := metadata
-			router.ExchangeAsync(adapter.WithContext(ctx, &metadataInQuery), &message, adapter.DNSQueryOptions{}, func(response *mDNS.Msg, err error) {
-				if err != nil {
-					cancel(err)
-					return
-				}
-				timeout.Update()
-				responseBuffer, truncateErr := dns.TruncateDNSMessage(&message, response, frontHeadroom, rearHeadroom)
-				if truncateErr != nil {
-					cancel(truncateErr)
-					return
-				}
-				writeErr := conn.WritePacket(responseBuffer, destination)
-				if writeErr != nil {
-					cancel(writeErr)
+			err = ExchangePacket(ctx, router, metadata, &message, size, conn, destination, frontHeadroom, rearHeadroom, func(e error) {
+				if e != nil {
+					cancel(e)
+				} else {
+					timeout.Update()
 				}
 			})
+			if err != nil {
+				return err
+			}
 		}
 	})
 	group.Cleanup(func() {
@@ -162,6 +175,7 @@ func newDNSPacketConnection(ctx context.Context, router adapter.DNSRouter, conn 
 	group.Append0(func(_ context.Context) error {
 		for {
 			var (
+				size        int
 				message     mDNS.Msg
 				destination M.Socksaddr
 				err         error
@@ -173,6 +187,7 @@ func newDNSPacketConnection(ctx context.Context, router adapter.DNSRouter, conn 
 				for _, counter := range readCounters {
 					counter(int64(packet.Buffer.Len()))
 				}
+				size = packet.Buffer.Len()
 				err = message.Unpack(packet.Buffer.Bytes())
 				packet.Buffer.Release()
 				destination = packet.Destination
@@ -190,6 +205,7 @@ func newDNSPacketConnection(ctx context.Context, router adapter.DNSRouter, conn 
 				for _, counter := range readCounters {
 					counter(int64(buffer.Len()))
 				}
+				size = buffer.Len()
 				err = message.Unpack(buffer.Bytes())
 				buffer.Release()
 				if err != nil {
@@ -198,27 +214,64 @@ func newDNSPacketConnection(ctx context.Context, router adapter.DNSRouter, conn 
 				}
 				timeout.Update()
 			}
-			metadataInQuery := metadata
-			router.ExchangeAsync(adapter.WithContext(ctx, &metadataInQuery), &message, adapter.DNSQueryOptions{}, func(response *mDNS.Msg, err error) {
-				if err != nil {
-					cancel(err)
-					return
-				}
-				timeout.Update()
-				responseBuffer, truncateErr := dns.TruncateDNSMessage(&message, response, frontHeadroom, rearHeadroom)
-				if truncateErr != nil {
-					cancel(truncateErr)
-					return
-				}
-				writeErr := conn.WritePacket(responseBuffer, destination)
-				if writeErr != nil {
-					cancel(writeErr)
+			err = ExchangePacket(ctx, router, metadata, &message, size, conn, destination, frontHeadroom, rearHeadroom, func(e error) {
+				if e != nil {
+					cancel(e)
+				} else {
+					timeout.Update()
 				}
 			})
+			if err != nil {
+				return err
+			}
 		}
 	})
 	group.Cleanup(func() {
 		conn.Close()
 	})
 	return group.Run(fastClose)
+}
+
+// ExchangePacket handles one decoded client datagram, including its final wire response.
+func ExchangePacket(ctx context.Context, router adapter.DNSRouter, metadata adapter.InboundContext, msg *mDNS.Msg, size int, writer N.PacketWriter, destination M.Socksaddr, front, rear int, done func(error)) error {
+	ctx, q, err := audit.BeginDNS(ctx, metadata, "udp", msg, size)
+	if err != nil {
+		return err
+	}
+	router.ExchangeAsync(adapter.WithContext(ctx, &metadata), msg, adapter.DNSQueryOptions{}, func(response *mDNS.Msg, err error) {
+		if err != nil {
+			q.Failed(err)
+			done(err)
+			return
+		}
+		buffer, err := dns.TruncateDNSMessage(msg, response, front, rear)
+		if err != nil {
+			if result := q.Response(response); result != nil {
+				result(0, err)
+			}
+			done(err)
+			return
+		}
+		n := buffer.Len()
+		var result func(int, error)
+		if q != nil {
+			var wire mDNS.Msg
+			if err = wire.Unpack(buffer.Bytes()); err != nil {
+				buffer.Release()
+				q.Failed(err)
+				done(err)
+				return
+			}
+			result = q.Response(&wire)
+		}
+		err = writer.WritePacket(buffer, destination)
+		if result != nil {
+			if err != nil {
+				n = 0
+			}
+			result(n, err)
+		}
+		done(err)
+	})
+	return nil
 }

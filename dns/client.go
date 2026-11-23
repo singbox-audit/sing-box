@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/audit"
 	"github.com/sagernet/sing-box/common/compatible"
 	"github.com/sagernet/sing-box/common/interrupt"
 	C "github.com/sagernet/sing-box/constant"
@@ -320,6 +321,7 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 				} else {
 					logCachedResponse(c.logger, ctx, response, ttl)
 				}
+				audit.DNSAttempt(ctx, transport.Tag(), true)
 				response.Id = message.Id
 				return nil, response, exchangeDone, nil
 			}
@@ -756,6 +758,7 @@ func stripDNSPadding(response *dns.Msg) {
 }
 
 func (c *Client) exchangeToTransport(ctx context.Context, transport adapter.DNSTransport, message *dns.Msg) (*dns.Msg, error) {
+	audit.DNSAttempt(ctx, transport.Tag(), false)
 	response, err := transport.Exchange(ctx, message)
 	if err == nil {
 		stripDNSPadding(response)
@@ -769,6 +772,7 @@ func (c *Client) exchangeToTransport(ctx context.Context, transport adapter.DNST
 }
 
 func (c *Client) exchangeToTransportAsync(ctx context.Context, transport adapter.DNSTransport, message *dns.Msg, callback func(response *dns.Msg, err error)) {
+	audit.DNSAttempt(ctx, transport.Tag(), false)
 	transport.ExchangeAsync(ctx, message, func(response *dns.Msg, err error) {
 		if err == nil {
 			stripDNSPadding(response)

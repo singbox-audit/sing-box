@@ -89,6 +89,7 @@ func (r *Router) routeConnection(ctx context.Context, conn net.Conn, metadata ad
 		injectable.NewConnection(ctx, conn, metadata, onClose)
 		return nil
 	}
+	original := metadata.Destination
 	metadata.Network = N.NetworkTCP
 	switch metadata.Destination.Fqdn {
 	case mux.Destination.Fqdn:
@@ -119,7 +120,7 @@ func (r *Router) routeConnection(ctx context.Context, conn net.Conn, metadata ad
 			selectedOutbound, loaded = r.outbound.Outbound(action.Outbound)
 			if !loaded {
 				buf.ReleaseMulti(buffers)
-				return E.New("outbound not found: ", action.Outbound)
+				return r.audit.SelectionError(metadata, original, selectedRule, action.Outbound, E.New("outbound not found: ", action.Outbound))
 			}
 		case *R.RuleActionBypass:
 			if action.Outbound == "" {
@@ -129,10 +130,13 @@ func (r *Router) routeConnection(ctx context.Context, conn net.Conn, metadata ad
 			selectedOutbound, loaded = r.outbound.Outbound(action.Outbound)
 			if !loaded {
 				buf.ReleaseMulti(buffers)
-				return E.New("outbound not found: ", action.Outbound)
+				return r.audit.SelectionError(metadata, original, selectedRule, action.Outbound, E.New("outbound not found: ", action.Outbound))
 			}
 		case *R.RuleActionReject:
 			buf.ReleaseMulti(buffers)
+			if auditErr := r.audit.Decision(metadata, original, selectedRule, "", "rejected", nil); auditErr != nil {
+				return auditErr
+			}
 			if action.Method == C.RuleActionRejectMethodReply {
 				return E.New("reject method `reply` is not supported for TCP connections")
 			}
@@ -151,7 +155,7 @@ func (r *Router) routeConnection(ctx context.Context, conn net.Conn, metadata ad
 	chain, err := resolveOutbound(selectedOutbound, N.NetworkTCP)
 	if err != nil {
 		buf.ReleaseMulti(buffers)
-		return err
+		return r.audit.SelectionError(metadata, original, selectedRule, selectedOutbound.Tag(), err)
 	}
 	for _, buffer := range buffers {
 		conn = bufio.NewCachedConn(conn, buffer)
@@ -161,6 +165,13 @@ func (r *Router) routeConnection(ctx context.Context, conn net.Conn, metadata ad
 	}
 	metadata.RouteOutbound = selectedOutbound.Tag()
 	metadata.OutboundChain = chain
+	if r.audit != nil {
+		ctx, conn, onClose, err = r.audit.TrackTCP(ctx, conn, metadata, original, onClose)
+		if err != nil {
+			conn.Close()
+			return err
+		}
+	}
 	for _, tracker := range r.trackers {
 		conn = tracker.RoutedConnection(ctx, conn, metadata, selectedRule, selectedOutbound)
 	}
@@ -266,6 +277,7 @@ func (r *Router) routePacketConnection(ctx context.Context, conn N.PacketConn, m
 		return nil
 	}
 	// TODO: move to UoT
+	original := metadata.Destination
 	metadata.Network = N.NetworkUDP
 
 	// Currently we don't have deadline usages for UDP connections
@@ -288,7 +300,7 @@ func (r *Router) routePacketConnection(ctx context.Context, conn N.PacketConn, m
 			selectedOutbound, loaded = r.outbound.Outbound(action.Outbound)
 			if !loaded {
 				N.ReleaseMultiPacketBuffer(packetBuffers)
-				return E.New("outbound not found: ", action.Outbound)
+				return r.audit.SelectionError(metadata, original, selectedRule, action.Outbound, E.New("outbound not found: ", action.Outbound))
 			}
 		case *R.RuleActionBypass:
 			if action.Outbound == "" {
@@ -298,10 +310,13 @@ func (r *Router) routePacketConnection(ctx context.Context, conn N.PacketConn, m
 			selectedOutbound, loaded = r.outbound.Outbound(action.Outbound)
 			if !loaded {
 				N.ReleaseMultiPacketBuffer(packetBuffers)
-				return E.New("outbound not found: ", action.Outbound)
+				return r.audit.SelectionError(metadata, original, selectedRule, action.Outbound, E.New("outbound not found: ", action.Outbound))
 			}
 		case *R.RuleActionReject:
 			N.ReleaseMultiPacketBuffer(packetBuffers)
+			if auditErr := r.audit.Decision(metadata, original, selectedRule, "", "rejected", nil); auditErr != nil {
+				return auditErr
+			}
 			if action.Method == C.RuleActionRejectMethodReply {
 				return E.New("reject method `reply` is not supported for UDP connections")
 			}
@@ -316,7 +331,7 @@ func (r *Router) routePacketConnection(ctx context.Context, conn N.PacketConn, m
 	chain, err := resolveOutbound(selectedOutbound, N.NetworkUDP)
 	if err != nil {
 		N.ReleaseMultiPacketBuffer(packetBuffers)
-		return err
+		return r.audit.SelectionError(metadata, original, selectedRule, selectedOutbound.Tag(), err)
 	}
 	for _, buffer := range packetBuffers {
 		conn = bufio.NewCachedPacketConn(conn, buffer.Buffer, buffer.Destination)
@@ -327,6 +342,13 @@ func (r *Router) routePacketConnection(ctx context.Context, conn N.PacketConn, m
 	}
 	metadata.RouteOutbound = selectedOutbound.Tag()
 	metadata.OutboundChain = chain
+	if r.audit != nil {
+		ctx, conn, onClose, err = r.audit.TrackUDP(ctx, conn, metadata, original, onClose)
+		if err != nil {
+			conn.Close()
+			return err
+		}
+	}
 	for _, tracker := range r.trackers {
 		conn = tracker.RoutedPacketConnection(ctx, conn, metadata, selectedRule, selectedOutbound)
 	}

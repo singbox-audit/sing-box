@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/audit"
 	"github.com/sagernet/sing-box/common/taskmonitor"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/experimental/deprecated"
@@ -1223,21 +1224,22 @@ func (r *Router) ExchangeAsync(ctx context.Context, message *mDNS.Msg, options a
 	if options.Transport != nil {
 		transport := options.Transport
 		r.client.ExchangeAsync(ctx, transport, message, r.finalizeExchangeOptions(options), nil, func(response *mDNS.Msg, exchangeErr error) {
-			r.finishExchangeAsync(message, transport, response, exchangeErr, callback)
+			r.finishExchangeAsync(ctx, message, transport, response, exchangeErr, callback)
 		})
 	} else if !exchangeCtx.legacyDNSMode {
 		r.exchangeWithRulesAsync(ctx, exchangeCtx.rules, message, options, true, func(result exchangeWithRulesResult) {
-			r.finishExchangeAsync(message, result.transport, result.response, result.err, callback)
+			r.finishExchangeAsync(ctx, message, result.transport, result.response, result.err, callback)
 		})
 	} else {
 		go func() {
 			response, transport, exchangeErr := r.exchangeLegacy(ctx, exchangeCtx, message, options)
-			r.finishExchangeAsync(message, transport, response, exchangeErr, callback)
+			r.finishExchangeAsync(ctx, message, transport, response, exchangeErr, callback)
 		}()
 	}
 }
 
-func (r *Router) finishExchangeAsync(message *mDNS.Msg, transport adapter.DNSTransport, response *mDNS.Msg, err error, callback func(response *mDNS.Msg, err error)) {
+func (r *Router) finishExchangeAsync(ctx context.Context, message *mDNS.Msg, transport adapter.DNSTransport, response *mDNS.Msg, err error, callback func(response *mDNS.Msg, err error)) {
+	audit.DNSSelected(ctx, transport)
 	if err != nil {
 		callback(nil, err)
 		return

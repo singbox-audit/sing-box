@@ -66,6 +66,7 @@ type Options struct {
 	option.Options
 	Context                    context.Context
 	AuditDirectory             string
+	AuditMinFreeBytes          uint64
 	PlatformLogWriter          log.PlatformWriter
 	NetworkNamespaceHolderArgs []string
 }
@@ -236,17 +237,22 @@ func New(options Options) (*Box, error) {
 	httpClientManager := httpclient.NewManager(ctx, logFactory.NewLogger("httpclient"), options.HTTPClients, routeOptions.DefaultHTTPClient)
 	service.MustRegister[adapter.HTTPClientManager](ctx, httpClientManager)
 	httpClientService := adapter.LifecycleService(httpClientManager)
+	if options.AuditDirectory != "" {
+		if err := audit.ValidateIdentities(options.Inbounds); err != nil {
+			return nil, err
+		}
+		recorder := audit.NewRecorder(options.AuditDirectory, logFactory.NewLogger("audit"))
+		recorder.SetMinFreeBytes(options.AuditMinFreeBytes)
+		service.MustRegisterPtr(ctx, recorder)
+		internalServices = append(internalServices, recorder)
+	}
 	router := route.NewRouter(ctx, logFactory, routeOptions, dnsOptions)
 	service.MustRegister[adapter.Router](ctx, router)
 	err = router.Initialize(routeOptions.Rules, routeOptions.RuleSet)
 	if err != nil {
 		return nil, E.Cause(err, "initialize router")
 	}
-	if options.AuditDirectory != "" {
-		recorder := audit.NewRecorder(options.AuditDirectory, logFactory.NewLogger("audit"))
-		router.AppendTracker(recorder)
-		internalServices = append(internalServices, recorder)
-	}
+
 	if needClashAPI || needAPIService || options.PlatformLogWriter != nil {
 		trafficManager := trafficcontrol.NewManager()
 		service.MustRegisterPtr(ctx, trafficManager)
