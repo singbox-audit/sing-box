@@ -1,0 +1,42 @@
+name: Audit server
+
+on:
+  push:
+    branches: [audit-server]
+  pull_request:
+    branches: [audit-server]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-server-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test dependencies
+        run: python -m pip install 'dnspython>=2.7,<3' 'duckdb==2.0.1'
+      - name: Run audit tests with the race detector
+        run: go test -race ./common/audit ./protocol/dns ./dns ./route
+      - name: Build Linux audit server
+        env:
+          CGO_ENABLED: '0'
+        run: >-
+          go build -trimpath -tags 'with_quic with_clash_api'
+          -ldflags '-s -w -checklinkname=0 -X github.com/sagernet/sing-box/constant.Version=1.14.4-audit'
+          -o bin/sing-box-audit ./cmd/sing-box
+      - name: Verify DNS, routing and archive replay
+        run: |
+          python tools/audit/smoke.py ./bin/sing-box-audit
+          python tools/audit/routing_smoke.py ./bin/sing-box-audit --output "$RUNNER_TEMP/routing-test"
+          python tools/audit/test_archive.py
