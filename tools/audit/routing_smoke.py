@@ -8,6 +8,7 @@ import argparse
 import concurrent.futures
 import json
 import pathlib
+import signal
 import socket
 import subprocess
 import threading
@@ -82,6 +83,26 @@ def main():
             headers={"Content-Type": "application/json"},
         )
         assert urllib.request.urlopen(r).status == 204
+
+    if audit:
+        for sig in (signal.SIGTERM, signal.SIGHUP):
+            spool = root / sig.name
+            with process(
+                exe, root, sig.name, config, ["--audit-directory", spool]
+            ) as p:
+                send(0)
+                deadline = time.monotonic() + 10
+                while not any(spool.glob("conn_*.jsonl.zst.partial")):
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("audit volume did not open")
+                    time.sleep(0.025)
+                # The open file remains writable, but sealing its old path fails.
+                spool.rename(root / (sig.name + "-moved"))
+                p.send_signal(sig)
+                assert p.wait(timeout=15) > 0, sig.name
+                assert (
+                    "close connection-audit" in (root / (sig.name + ".log")).read_text()
+                )
 
     with process(exe, root, "proxy", config, flags) as p:
         with socks(proxy, port) as old:

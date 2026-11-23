@@ -214,6 +214,9 @@ func run() error {
 			go closeMonitor(closeCtx)
 			err = instance.Close()
 			closed()
+			if err != nil && auditDirectory != "" {
+				return E.Cause(err, "close service")
+			}
 			if osSignal != syscall.SIGHUP {
 				if err != nil {
 					log.Error(E.Cause(err, "sing-box did not closed properly"))
