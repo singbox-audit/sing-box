@@ -114,7 +114,7 @@ func recoverVolume(path string, d *zstd.Decoder) error {
 			}
 			// Preserve the damaged suffix before truncation. Repeating recovery
 			// after an interruption recreates the same suffix from the original.
-			tail, err := os.OpenFile(path+".damaged", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
+			tail, err := os.OpenFile(path+".damaged", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 			if err != nil {
 				return err
 			}

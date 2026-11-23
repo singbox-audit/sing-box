@@ -18,13 +18,13 @@ var _ *http.Transport
 
 // net/http/internal/http2.Transport
 type internalTransport struct {
-	t1       [2]uintptr // TransportConfig
+	_        [2]uintptr // TransportConfig
 	connPool *clientConnPool
 }
 
 // net/http/internal/http2.clientConnPool
 type clientConnPool struct {
-	t     *internalTransport
+	_     *internalTransport // transport back-pointer
 	mu    sync.Mutex
 	conns map[string][]unsafe.Pointer // key is host:port, value is []*ClientConn
 }

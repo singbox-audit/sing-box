@@ -11,7 +11,7 @@ import (
 )
 
 type efaceWords struct {
-	typ  unsafe.Pointer
+	_    unsafe.Pointer // interface type word
 	data unsafe.Pointer
 }
 

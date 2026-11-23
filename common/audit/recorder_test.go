@@ -10,10 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/klauspost/compress/zstd"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/log"
 	M "github.com/sagernet/sing/common/metadata"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 func startRecorder(t *testing.T, dir string) (*Recorder, *adapter.Scope) {
@@ -127,7 +128,7 @@ func TestRecoveryAtTruncatedFrame(t *testing.T) {
 	if err = os.Rename(path, partial); err != nil {
 		t.Fatal(err)
 	}
-	f, err := os.OpenFile(partial, os.O_APPEND|os.O_WRONLY, 0600)
+	f, err := os.OpenFile(partial, os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +159,7 @@ func TestRotationAndRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(renamed) })
-	if err := os.WriteFile(dir, nil, 0600); err != nil {
+	if err := os.WriteFile(dir, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()

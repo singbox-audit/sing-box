@@ -10,7 +10,7 @@ import (
 )
 
 type clientConnPool struct {
-	t     *http2.Transport
+	_     *http2.Transport // transport back-pointer
 	mu    sync.Mutex
 	conns map[string][]*http2.ClientConn // key is host:port
 }

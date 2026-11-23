@@ -5,10 +5,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gofrs/uuid/v5"
-	"github.com/miekg/dns"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing/service"
+
+	"github.com/gofrs/uuid/v5"
+	"github.com/miekg/dns"
 )
 
 type dnsEvent struct {

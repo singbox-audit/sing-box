@@ -24,8 +24,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var auditDirectory string
-var auditMinFreeMiB uint32
+var (
+	auditDirectory  string
+	auditMinFreeMiB uint32
+)
 
 var commandRun = &cobra.Command{
 	Use:   "run",

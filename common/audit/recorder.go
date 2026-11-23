@@ -12,11 +12,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/log"
+
 	"github.com/gofrs/flock"
 	"github.com/gofrs/uuid/v5"
 	"github.com/klauspost/compress/zstd"
-	"github.com/sagernet/sing-box/adapter"
-	"github.com/sagernet/sing-box/log"
 )
 
 type entry struct {
@@ -108,7 +109,7 @@ func (r *Recorder) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStateInitialize {
 		return nil
 	}
-	if err := os.MkdirAll(r.directory, 0700); err != nil {
+	if err := os.MkdirAll(r.directory, 0o700); err != nil {
 		return err
 	}
 	r.lock = flock.New(filepath.Join(r.directory, ".audit.lock"))
@@ -271,7 +272,7 @@ func (r *Recorder) appendFrame(kind string, hour time.Time, frame []byte) error 
 			return err
 		}
 		path := filepath.Join(r.directory, kind+"_"+hour.Format("20060102T15Z")+"_"+id.String()+".jsonl.zst.partial")
-		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err != nil {
 			return err
 		}
