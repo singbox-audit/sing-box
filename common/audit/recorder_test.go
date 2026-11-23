@@ -151,7 +151,15 @@ func TestRecoveryAtTruncatedFrame(t *testing.T) {
 
 func TestRotationAndRetry(t *testing.T) {
 	dir := t.TempDir()
-	r, scope := startRecorder(t, dir)
+	// Exercise the writer in a private spool without holding the production
+	// lock file open: Windows prevents renaming a directory with an open child.
+	logger := log.NewNOPFactory().NewLogger("audit")
+	scope := adapter.NewScope(t.Context(), logger)
+	t.Cleanup(func() { scope.Close() })
+	r := NewRecorder(dir, logger)
+	if err := r.startWriter(scope); err != nil {
+		t.Fatal(err)
+	}
 	// A regular file in place of the spool directory forces a repeatable write
 	// error without requiring root, a full filesystem, or timing a short write.
 	renamed := dir + "-holding"

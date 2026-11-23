@@ -124,6 +124,11 @@ func (r *Recorder) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if err = recoverVolumes(r.directory); err != nil {
 		return err
 	}
+	return r.startWriter(scope)
+}
+
+func (r *Recorder) startWriter(scope *adapter.Scope) error {
+	var err error
 	r.encoder, err = zstd.NewWriter(nil, zstd.WithEncoderConcurrency(1), zstd.WithWindowSize(1<<20), zstd.WithEncoderLevel(zstd.SpeedFastest))
 	if err != nil {
 		return err
@@ -223,14 +228,6 @@ func (r *Recorder) close() error {
 		return *err
 	}
 	return nil
-}
-
-func syncDirectory(path string) error {
-	d, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	return errors.Join(d.Sync(), d.Close())
 }
 
 func (r *Recorder) seal(kind string) error {
